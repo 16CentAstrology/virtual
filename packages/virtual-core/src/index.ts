@@ -187,7 +187,7 @@ export const measureElement = <TItemElement extends Element>(
 export const windowScroll = <T extends Window>(
   offset: number,
   {
-    adjustments = window.scrollY,
+    adjustments = 0,
     behavior,
   }: { adjustments?: number; behavior?: ScrollBehavior },
   instance: Virtualizer<T, any>,
@@ -243,7 +243,10 @@ export interface VirtualizerOptions<
   // Optional
   debug?: any
   initialRect?: Rect
-  onChange?: (instance: Virtualizer<TScrollElement, TItemElement>) => void
+  onChange?: (
+    instance: Virtualizer<TScrollElement, TItemElement>,
+    sync: boolean,
+  ) => void
   measureElement?: (
     element: TItemElement,
     entry: ResizeObserverEntry | undefined,
@@ -260,7 +263,6 @@ export interface VirtualizerOptions<
   rangeExtractor?: (range: Range) => number[]
   scrollMargin?: number
   scrollingDelay?: number
-  elementKeyAttribute?: string
   indexAttribute?: string
   initialMeasurementsCache?: VirtualItem[]
   lanes?: number
@@ -279,7 +281,7 @@ export class Virtualizer<
   measurementsCache: VirtualItem[] = []
   private itemSizeCache = new Map<Key, number>()
   private pendingMeasuredCacheIndexes: number[] = []
-  private scrollRect: Rect
+  scrollRect: Rect
   scrollOffset: number
   scrollDirection: ScrollDirection | null = null
   private scrollAdjustments: number = 0
@@ -308,10 +310,7 @@ export class Virtualizer<
       unobserve: (target: Element) => get()?.unobserve(target),
     }
   })()
-  range: { startIndex: number; endIndex: number } = {
-    startIndex: 0,
-    endIndex: 0,
-  }
+  range: { startIndex: number; endIndex: number } | null = null
 
   constructor(opts: VirtualizerOptions<TScrollElement, TItemElement>) {
     this.setOptions(opts)
@@ -347,16 +346,39 @@ export class Virtualizer<
       scrollMargin: 0,
       scrollingDelay: 150,
       indexAttribute: 'data-index',
-      elementKeyAttribute: 'data-element-key',
       initialMeasurementsCache: [],
       lanes: 1,
       ...opts,
     }
   }
 
-  private notify = () => {
-    this.options.onChange?.(this)
+  private notify = (sync: boolean) => {
+    this.options.onChange?.(this, sync)
   }
+
+  private maybeNotify = memo(
+    () => {
+      this.calculateRange()
+
+      return [
+        this.isScrolling,
+        this.range ? this.range.startIndex : null,
+        this.range ? this.range.endIndex : null,
+      ]
+    },
+    (isScrolling) => {
+      this.notify(isScrolling)
+    },
+    {
+      key: process.env.NODE_ENV !== 'production' && 'maybeNotify',
+      debug: () => this.options.debug,
+      initialDeps: [
+        this.isScrolling,
+        this.range ? this.range.startIndex : null,
+        this.range ? this.range.endIndex : null,
+      ] as [boolean, number | null, number | null],
+    },
+  )
 
   private cleanup = () => {
     this.unsubs.filter(Boolean).forEach((d) => d!())
@@ -387,15 +409,8 @@ export class Virtualizer<
 
       this.unsubs.push(
         this.options.observeElementRect(this, (rect) => {
-          const prev = this.scrollRect
           this.scrollRect = rect
-          if (
-            this.options.horizontal
-              ? rect.width !== prev.width
-              : rect.height !== prev.height
-          ) {
-            this.maybeNotify()
-          }
+          this.maybeNotify()
         }),
       )
 
@@ -551,35 +566,18 @@ export class Virtualizer<
   calculateRange = memo(
     () => [this.getMeasurements(), this.getSize(), this.scrollOffset],
     (measurements, outerSize, scrollOffset) => {
-      return (this.range = calculateRange({
-        measurements,
-        outerSize,
-        scrollOffset,
-      }))
+      return (this.range =
+        measurements.length > 0 && outerSize > 0
+          ? calculateRange({
+              measurements,
+              outerSize,
+              scrollOffset,
+            })
+          : null)
     },
     {
       key: process.env.NODE_ENV !== 'production' && 'calculateRange',
       debug: () => this.options.debug,
-    },
-  )
-
-  private maybeNotify = memo(
-    () => {
-      const range = this.calculateRange()
-
-      return [range.startIndex, range.endIndex, this.isScrolling]
-    },
-    () => {
-      this.notify()
-    },
-    {
-      key: process.env.NODE_ENV !== 'production' && 'maybeNotify',
-      debug: () => this.options.debug,
-      initialDeps: [
-        this.range.startIndex,
-        this.range.endIndex,
-        this.isScrolling,
-      ],
     },
   )
 
@@ -591,11 +589,13 @@ export class Virtualizer<
       this.options.count,
     ],
     (rangeExtractor, range, overscan, count) => {
-      return rangeExtractor({
-        ...range,
-        overscan,
-        count,
-      })
+      return range === null
+        ? []
+        : rangeExtractor({
+            ...range,
+            overscan,
+            count,
+          })
     },
     {
       key: process.env.NODE_ENV !== 'production' && 'getIndexes',
@@ -621,43 +621,35 @@ export class Virtualizer<
     node: TItemElement,
     entry: ResizeObserverEntry | undefined,
   ) => {
-    const index = this.indexFromElement(node)
+    const item = this.measurementsCache[this.indexFromElement(node)]
 
-    const elementKey =
-      node.getAttribute(this.options.elementKeyAttribute) ??
-      this.options.getItemKey(index)
-
-    const prevNode = this.measureElementCache.get(elementKey)
-
-    if (!node.isConnected) {
-      this.observer.unobserve(node)
-      if (node === prevNode) {
-        this.measureElementCache.delete(elementKey)
-      }
+    if (!item || !node.isConnected) {
+      this.measureElementCache.forEach((cached, key) => {
+        if (cached === node) {
+          this.observer.unobserve(node)
+          this.measureElementCache.delete(key)
+        }
+      })
       return
     }
+
+    const prevNode = this.measureElementCache.get(item.key)
 
     if (prevNode !== node) {
       if (prevNode) {
         this.observer.unobserve(prevNode)
       }
       this.observer.observe(node)
-      this.measureElementCache.set(elementKey, node)
+      this.measureElementCache.set(item.key, node)
     }
 
     const measuredItemSize = this.options.measureElement(node, entry, this)
 
-    this.resizeItem(index, measuredItemSize)
+    this.resizeItem(item, measuredItemSize)
   }
 
-  resizeItem = (index: number, size: number) => {
-    const item = this.measurementsCache[index]
-    if (!item) {
-      return
-    }
-
+  resizeItem = (item: VirtualItem, size: number) => {
     const itemSize = this.itemSizeCache.get(item.key) ?? item.size
-
     const delta = size - itemSize
 
     if (delta !== 0) {
@@ -672,11 +664,10 @@ export class Virtualizer<
         })
       }
 
-      this.pendingMeasuredCacheIndexes.push(index)
-
+      this.pendingMeasuredCacheIndexes.push(item.index)
       this.itemSizeCache = new Map(this.itemSizeCache.set(item.key, size))
 
-      this.notify()
+      this.notify(false)
     }
   }
 
@@ -889,7 +880,7 @@ export class Virtualizer<
 
   measure = () => {
     this.itemSizeCache = new Map()
-    this.notify()
+    this.notify(false)
   }
 }
 

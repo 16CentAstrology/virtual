@@ -43,9 +43,12 @@ function createVirtualizerBase<
     }
     originalSetOptions({
       ...resolvedOptions,
-      onChange: (instance: Virtualizer<TScrollElement, TItemElement>) => {
+      onChange: (
+        instance: Virtualizer<TScrollElement, TItemElement>,
+        sync: boolean,
+      ) => {
         virtualizerWritable.set(instance)
-        resolvedOptions.onChange?.(instance)
+        resolvedOptions.onChange?.(instance, sync)
       },
     })
     virtualizer._willUpdate()
@@ -92,6 +95,7 @@ export function createWindowVirtualizer<TItemElement extends Element>(
     observeElementRect: observeWindowRect,
     observeElementOffset: observeWindowOffset,
     scrollToFn: windowScroll,
+    initialOffset: typeof document !== 'undefined' ? window.scrollY : undefined,
     ...options,
   })
 }

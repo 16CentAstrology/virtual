@@ -41,6 +41,10 @@ function List({
 
   const parentRef = React.useRef<HTMLDivElement>(null)
 
+  const elementRectCallbackRef = React.useRef<
+    ((rect: { height: number; width: number }) => void) | null
+  >(null)
+
   const rowVirtualizer = useVirtualizer({
     count,
     getScrollElement: () => parentRef.current,
@@ -48,10 +52,15 @@ function List({
     overscan,
     observeElementRect: (_, cb) => {
       cb({ height, width })
+      elementRectCallbackRef.current = cb
     },
     measureElement: () => itemSize ?? 0,
     rangeExtractor,
   })
+
+  React.useEffect(() => {
+    elementRectCallbackRef.current?.({ height, width })
+  }, [height, width])
 
   const measureElement = dynamic ? rowVirtualizer.measureElement : undefined
 
@@ -148,7 +157,7 @@ test('should render given dynamic size after scroll', () => {
   expect(screen.queryByText('Row 6')).toBeInTheDocument()
   expect(screen.queryByText('Row 7')).not.toBeInTheDocument()
 
-  expect(renderer).toHaveBeenCalledTimes(3)
+  expect(renderer).toHaveBeenCalledTimes(2)
 })
 
 test('should use rangeExtractor', () => {
@@ -171,4 +180,12 @@ test('should handle count change', () => {
   expect(screen.queryByText('Row 2')).toBeInTheDocument()
   expect(screen.queryByText('Row 4')).toBeInTheDocument()
   expect(screen.queryByText('Row 5')).not.toBeInTheDocument()
+})
+
+test('should handle handle height change', () => {
+  const { rerender } = render(<List count={0} height={0} />)
+
+  expect(screen.queryByText('Row 0')).not.toBeInTheDocument()
+  rerender(<List count={1} height={200} />)
+  expect(screen.queryByText('Row 0')).toBeInTheDocument()
 })

@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { flushSync } from 'react-dom'
 import {
   elementScroll,
   observeElementOffset,
@@ -27,9 +28,13 @@ function useVirtualizerBase<
 
   const resolvedOptions: VirtualizerOptions<TScrollElement, TItemElement> = {
     ...options,
-    onChange: (instance) => {
-      rerender()
-      options.onChange?.(instance)
+    onChange: (instance, sync) => {
+      if (sync) {
+        flushSync(rerender)
+      } else {
+        rerender()
+      }
+      options.onChange?.(instance, sync)
     },
   }
 
@@ -81,6 +86,7 @@ export function useWindowVirtualizer<TItemElement extends Element>(
     observeElementRect: observeWindowRect,
     observeElementOffset: observeWindowOffset,
     scrollToFn: windowScroll,
+    initialOffset: typeof document !== 'undefined' ? window.scrollY : undefined,
     ...options,
   })
 }

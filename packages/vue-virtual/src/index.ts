@@ -18,6 +18,7 @@ import {
   unref,
   watch,
 } from 'vue'
+export * from '@tanstack/virtual-core'
 
 type MaybeRef<T> = T | Ref<T>
 
@@ -49,9 +50,9 @@ function useVirtualizerBase<
     (options) => {
       virtualizer.setOptions({
         ...options,
-        onChange: (instance) => {
+        onChange: (instance, sync) => {
           triggerRef(state)
-          options.onChange?.(instance)
+          options.onChange?.(instance, sync)
         },
       })
 
@@ -106,6 +107,8 @@ export function useWindowVirtualizer<TItemElement extends Element>(
       observeElementRect: observeWindowRect,
       observeElementOffset: observeWindowOffset,
       scrollToFn: windowScroll,
+      initialOffset:
+        typeof document !== 'undefined' ? window.scrollY : undefined,
       ...unref(options),
     })),
   )

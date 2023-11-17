@@ -66,7 +66,10 @@ function createVirtualizerBase<
   createComputed(() => {
     virtualizer.setOptions(
       mergeProps(resolvedOptions, options, {
-        onChange: (instance: Virtualizer<TScrollElement, TItemElement>) => {
+        onChange: (
+          instance: Virtualizer<TScrollElement, TItemElement>,
+          sync: boolean,
+        ) => {
           instance._willUpdate()
           setVirtualItems(
             reconcile(instance.getVirtualItems(), {
@@ -74,7 +77,7 @@ function createVirtualizerBase<
             }),
           )
           setTotalSize(instance.getTotalSize())
-          options.onChange?.(instance)
+          options.onChange?.(instance, sync)
         },
       }),
     )
@@ -122,6 +125,8 @@ export function createWindowVirtualizer<TItemElement extends Element>(
         observeElementRect: observeWindowRect,
         observeElementOffset: observeWindowOffset,
         scrollToFn: windowScroll,
+        initialOffset:
+          typeof document !== 'undefined' ? window.scrollY : undefined,
       },
       options,
     ),
